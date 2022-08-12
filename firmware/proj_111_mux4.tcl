@@ -57,6 +57,7 @@ update_ip_catalog -rebuild
 set obj [get_filesets sources_1]
 set files [list \
 	[ file normalize "$origin_dir/hdl/vect2bits_9.v"]	\
+	[ file normalize "$origin_dir/hdl/lo_spi_mux.vhd"]	\
 ]
 add_files -norecurse -fileset $obj $files
 

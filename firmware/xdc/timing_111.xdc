@@ -32,5 +32,4 @@ set_clock_group -name clk_dac0_to_dac1 -asynchronous \
     
 set_clock_group -name clk_adc_to_adc_x2 -asynchronous \
     -group [get_clocks $clk_adc0] \
-    -group [get_clocks $clk_adc0_x2]
-                    
+    -group [get_clocks $clk_adc0_x2] 
