@@ -7,7 +7,7 @@ if { [info exists ::origin_dir_loc] } {
 }
 
 # Set the project name
-set _xil_proj_name_ "top"
+set _xil_proj_name_ "top_111"
 
 # Set the directory path for the original project from where this script was exported
 set orig_proj_dir "[file normalize "$origin_dir/"]"
@@ -20,7 +20,7 @@ set proj_dir [get_property directory [current_project]]
 
 # Set project properties
 set obj [current_project]
-set_property -name "board_part" -value "xilinx.com:zcu111:part0:1.1" -objects $obj
+set_property -name "board_part" -value "xilinx.com:zcu111:part0:1.4" -objects $obj
 set_property -name "default_lib" -value "xil_defaultlib" -objects $obj
 set_property -name "dsa.accelerator_binary_content" -value "bitstream" -objects $obj
 set_property -name "dsa.accelerator_binary_format" -value "xclbin2" -objects $obj
@@ -56,7 +56,7 @@ update_ip_catalog -rebuild
 # Set 'sources_1' fileset object
 set obj [get_filesets sources_1]
 set files [list \
-	[ file normalize "$origin_dir/hdl/vect2bits_4.v"]	\
+	[ file normalize "$origin_dir/hdl/vect2bits_16.v"]	\
 ]
 add_files -norecurse -fileset $obj $files
 
@@ -86,7 +86,7 @@ make_wrapper -files [get_files d_1.bd] -top
 
 # Add files to sources_1 fileset
 set files [list \
-  [file normalize "${origin_dir}/top/top.srcs/sources_1/bd/d_1/hdl/d_1_wrapper.v" ]\
+  [file normalize "${origin_dir}/top_111/top_111.srcs/sources_1/bd/d_1/hdl/d_1_wrapper.v" ]\
 ]
 add_files -fileset $obj $files
 

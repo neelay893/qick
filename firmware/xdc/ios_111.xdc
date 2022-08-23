@@ -7,18 +7,17 @@ set_property PACKAGE_PIN H16      	[get_ports "PMOD0_2_LS"];
 set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_2_LS"];
 set_property PACKAGE_PIN H17      	[get_ports "PMOD0_3_LS"];
 set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_3_LS"];
-#set_property PACKAGE_PIN J16      	[get_ports "PMOD0_4_LS"];
-#set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_4_LS"];
-#set_property PACKAGE_PIN K16      	[get_ports "PMOD0_5_LS"];
-#set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_5_LS"];
-#set_property PACKAGE_PIN H15      	[get_ports "PMOD0_6_LS"];
-#set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_6_LS"];
-#set_property PACKAGE_PIN J15      	[get_ports "PMOD0_7_LS"];
-#set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_7_LS"];
+set_property PACKAGE_PIN J16      	[get_ports "PMOD0_4_LS"];
+set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_4_LS"];
+set_property PACKAGE_PIN K16      	[get_ports "PMOD0_5_LS"];
+set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_5_LS"];
+set_property PACKAGE_PIN H15      	[get_ports "PMOD0_6_LS"];
+set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_6_LS"];
+set_property PACKAGE_PIN J15      	[get_ports "PMOD0_7_LS"];
+set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD0_7_LS"];
 
-# PMOD1
-#set_property PACKAGE_PIN L14      	[get_ports "PMOD1_0_LS"];
-#set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD1_0_LS"];
+set_property PACKAGE_PIN L14      	[get_ports "PMOD1_0_LS"];
+set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD1_0_LS"];
 #set_property PACKAGE_PIN L15      	[get_ports "PMOD1_1_LS"];
 #set_property IOSTANDARD  LVCMOS12 	[get_ports "PMOD1_1_LS"];
 #set_property PACKAGE_PIN M13      	[get_ports "PMOD1_2_LS"];

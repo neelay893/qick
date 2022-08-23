@@ -15,6 +15,11 @@ import queue
 from .parser import parse_to_bin
 from .streamer import DataStreamer
 from .qick_asm import QickConfig, QickProgram
+try:
+    from rpyc.utils.classic import obtain
+except ModuleNotFoundError:
+    def obtain(i):
+        return i
 from .helpers import trace_net, get_fclk, BusParser
 from . import bitfile_path
 
@@ -755,6 +760,9 @@ class AxisPFBReadoutV2(SocIp):
     # The channelizer DDS range is 1/8 of the sampling frequency, which effectively adds 3 bits of resolution.
     B_DDS = 35
 
+    # index of the PFB channel that is centered around DC.
+    CH_OFFSET = 4
+
     def __init__(self, description):
         """
         Constructor method
@@ -775,6 +783,9 @@ class AxisPFBReadoutV2(SocIp):
         # might need to jump through an axis_register_slice
         while busparser.mod2type[block] == "axis_register_slice":
             ((block, port),) = trace_net(busparser, block, 'S_AXIS')
+        if busparser.mod2type[block] == "axis_combiner":
+            ((block, port),) = trace_net(busparser, block, 'S00_AXIS')
+
         # port names are of the form 'm02_axis' where the block number is always even
         iTile, iBlock = [int(x) for x in port[1:3]]
         if soc.hs_adc:
@@ -795,6 +806,7 @@ class AxisPFBReadoutV2(SocIp):
         """
         self.ch_freqs = {}
         self.sel = None
+        self.out_chs = {}
 
     def set_out(self, sel="product"):
         """
@@ -839,7 +851,7 @@ class AxisPFBReadoutV2(SocIp):
         # if you have two RO frequencies close together, you might need to force one of them onto a non-optimal channel
         f_steps = int(np.round(ro_freq/(self.fs/16)))
         f_dds = ro_freq - f_steps*(self.fs/16)
-        in_ch = (4 + f_steps) % 8
+        in_ch = (self.CH_OFFSET + f_steps) % 8
 
         # we can calculate the register value without further referencing the gen_ch
         freq_int = self.soc.freq2int(f_dds, thiscfg)
@@ -847,7 +859,9 @@ class AxisPFBReadoutV2(SocIp):
 
     def set_freq_int(self, f_int, in_ch, out_ch):
         if in_ch in self.ch_freqs and f_int != self.ch_freqs[in_ch]:
-            centerfreq = ((in_ch - 4) % 8) * (self.fs/16)
+            # we are already using this PFB channel, and it's set to a different frequency
+            # now do a bunch of math to print an informative message
+            centerfreq = ((in_ch - self.CH_OFFSET) % 8) * (self.fs/16)
             lofreq = centerfreq - self.fs/32
             hifreq = centerfreq + self.fs/32
             thiscfg = {}
@@ -855,8 +869,9 @@ class AxisPFBReadoutV2(SocIp):
             thiscfg['b_dds'] = self.B_DDS
             oldfreq = centerfreq + self.soc.int2freq(self.ch_freqs[in_ch], thiscfg)
             newfreq = centerfreq + self.soc.int2freq(f_int, thiscfg)
-            raise RuntimeError("frequency collision: %f and %f MHz both map to the PFB channel that is optimal for [%f, %f] (all freqs expressed in first Nyquist zone)"%(newfreq, oldfreq, lofreq, hifreq))
+            raise RuntimeError("frequency collision: tried to set PFB output %d to %f MHz and output %d to %f MHz, but both map to the PFB channel that is optimal for [%f, %f] (all freqs expressed in first Nyquist zone)"%(out_ch, newfreq, self.out_chs[in_ch], oldfreq, lofreq, hifreq))
         self.ch_freqs[in_ch] = f_int
+        self.out_chs[in_ch] = out_ch
         # wire the selected PFB channel to the output
         setattr(self, "ch%dsel_reg"%(out_ch), in_ch)
         # set the PFB channel's DDS frequency
@@ -1360,10 +1375,14 @@ class AxisTProc64x32_x8(SocIp):
             self.start_pin = port[0]
         except:
             pass
+        # search for the trigger port
         for i in range(8):
             # what block does this output drive?
             # add 1, because output 0 goes to the DMA
-            ((block, port),) = trace_net(busparser, self.fullpath, 'm%d_axis' % (i+1))
+            try:
+                ((block, port),) = trace_net(busparser, self.fullpath, 'm%d_axis' % (i+1))
+            except: # skip disconnected tProc outputs
+                continue
             if busparser.mod2type[block] == "axis_set_reg":
                 self.trig_output = i
                 ((block, port),) = trace_net(sigparser, block, 'dout')
@@ -2009,6 +2028,11 @@ class QickSoc(Overlay, QickConfig):
             lmx_freq = self['refclk_freq']*2
             print("resetting clocks:", lmk_freq, lmx_freq)
             xrfclk.set_ref_clks(lmk_freq=lmk_freq, lmx_freq=lmx_freq)
+        elif self['board'] == 'RFSoC4x2':
+            lmk_freq = self['refclk_freq']/2
+            lmx_freq = self['refclk_freq']
+            print("resetting clocks:", lmk_freq, lmx_freq)
+            xrfclk.set_ref_clks(lmk_freq=lmk_freq, lmx_freq=lmx_freq)
 
     def get_decimated(self, ch, address=0, length=None):
         """
@@ -2223,7 +2247,7 @@ class QickSoc(Overlay, QickConfig):
         if reset: self.tproc.reset()
 
         # cast the program words to 64-bit uints
-        self.binprog = np.array(binprog, dtype=np.uint64)
+        self.binprog = np.array(obtain(binprog), dtype=np.uint64)
         # reshape to 32 bits to match the program memory
         self.binprog = np.frombuffer(self.binprog, np.uint32)
 
@@ -2245,6 +2269,9 @@ class QickSoc(Overlay, QickConfig):
         :param src: start source "internal" or "external"
         :type src: string
         """
+        # set internal-start register to "init"
+        # otherwise we might start the tProc on a transition from external to internal start
+        self.tproc.start_reg = 0
         self.tproc.start_src_reg = {"internal": 0, "external": 1}[src]
 
     def reset_gens(self):
