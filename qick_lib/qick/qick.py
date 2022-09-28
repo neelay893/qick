@@ -106,6 +106,9 @@ class AbsSignalGen(SocIp):
             # Switch
             self.switch = axis_switch
 
+            # Define buffer.
+            self.buff = allocate(shape=self.MAX_LENGTH, dtype=np.int32)
+
         # RF data converter
         self.rf = rf
 
@@ -172,8 +175,10 @@ class AbsSignalGen(SocIp):
             raise RuntimeError("%s: I/Q buffers must be the same length." %
                   self.__class__.__name__)
 
+        length = len(xin_i)
+
         # Check for max length.
-        if len(xin_i) > self.MAX_LENGTH:
+        if length > self.MAX_LENGTH:
             raise RuntimeError("%s: buffer length must be %d samples or less." %
                   (self.__class__.__name__, self.MAX_LENGTH))
 
@@ -181,30 +186,24 @@ class AbsSignalGen(SocIp):
         #if len(xin_i) % 2 != 0:
         #    raise RuntimeError("Buffer transfer length must be even number.")
 
-        # Check for max value.
-        if np.max(xin_i) > np.iinfo(np.int16).max or np.min(xin_i) < np.iinfo(np.int16).min:
-            raise ValueError(
-                "real part of envelope exceeds limits of int16 datatype")
+        # Pack the data into a single array; columns will be concatenated
+        # -> lower 16 bits: I value.
+        # -> higher 16 bits: Q value.
+        xin = np.stack((xin_i, xin_q), axis=1)
 
-        if np.max(xin_q) > np.iinfo(np.int16).max or np.min(xin_q) < np.iinfo(np.int16).min:
+        # Check for max value.
+        if np.max(np.abs(xin)) > self.MAXV:
             raise ValueError(
-                "imaginary part of envelope exceeds limits of int16 datatype")
+                "max magnitude of envelope (%d) exceeds limit of datatype (%d)" % (np.max(np.abs(xin)), self.MAXV))
 
         # Route switch to channel.
         self.switch.sel(mst=self.switch_ch)
 
-        # time.sleep(0.050)
-
-        # Format data.
-        xin_i = xin_i.astype(np.int32)
-        xin_q = xin_q.astype(np.int32)
-
-        xin = xin_i + (xin_q << 16)
         #print(self.fullpath, xin.shape, addr, self.switch_ch)
 
-        # Define buffer.
-        self.buff = allocate(shape=len(xin), dtype=np.int32)
-        np.copyto(self.buff, xin)
+        # Format and copy data.
+        np.copyto(self.buff[:length],
+                np.frombuffer(xin.astype(np.int16), dtype=np.int32))
 
         ################
         ### Load I/Q ###
@@ -213,7 +212,7 @@ class AbsSignalGen(SocIp):
         self._wr_enable(addr)
 
         # DMA data.
-        self.dma.sendchannel.transfer(self.buff)
+        self.dma.sendchannel.transfer(self.buff, nbytes=int(length*4))
         self.dma.sendchannel.wait()
 
         # Disable writes.
@@ -1243,7 +1242,8 @@ class MrBufferEt(SocIp):
         self.MAX_LENGTH = 2**self.N * self.NM
 
         # Preallocate memory buffers for DMA transfers.
-        self.buff = allocate(shape=self.MAX_LENGTH, dtype=np.int32)
+        #self.buff = allocate(shape=self.MAX_LENGTH, dtype=np.int32)
+        self.buff = allocate(shape=self.MAX_LENGTH, dtype=np.int16)
 
     def config(self, dma, switch):
         self.dma = dma
@@ -1253,26 +1253,20 @@ class MrBufferEt(SocIp):
         # Route switch to channel.
         self.switch.sel(slv=ch)
 
-    def transfer(self):
+    def transfer(self, buff=None):
+        if buff is None:
+            buff = self.buff
         # Start send data mode.
         self.dr_start_reg = 1
 
         # DMA data.
-        buff = self.buff
         self.dma.recvchannel.transfer(buff)
         self.dma.recvchannel.wait()
 
         # Stop send data mode.
         self.dr_start_reg = 0
 
-        # Format:
-        # -> lower 16 bits: I value.
-        # -> higher 16 bits: Q value.
-        data = buff
-        dataI = data & 0xFFFF
-        dataQ = data >> 16
-
-        return np.stack((dataI, dataQ)).astype(np.int16)
+        return buff
 
     def enable(self):
         self.dw_capture_reg = 1
@@ -1723,7 +1717,7 @@ class QickSoc(Overlay, QickConfig):
     #gain_resolution_signed_bits = 16
 
     # Constructor.
-    def __init__(self, bitfile=None, force_init_clks=False, ignore_version=True, **kwargs):
+    def __init__(self, bitfile=None, force_init_clks=False, ignore_version=True, no_tproc=False, **kwargs):
         """
         Constructor method
         """
@@ -1752,17 +1746,18 @@ class QickSoc(Overlay, QickConfig):
         self.rf = self.usp_rf_data_converter_0
         self.rf.configure(self)
 
-        # tProcessor, 64-bit instruction, 32-bit registers, x8 channels.
-        self._tproc = self.axis_tproc64x32_x8_0
-        self._tproc.configure(self.axi_bram_ctrl_0, self.axi_dma_tproc)
-        self['fs_proc'] = get_fclk(self.parser, self.tproc.fullpath, "aclk")
+        if not no_tproc:
+            # tProcessor, 64-bit instruction, 32-bit registers, x8 channels.
+            self._tproc = self.axis_tproc64x32_x8_0
+            self._tproc.configure(self.axi_bram_ctrl_0, self.axi_dma_tproc)
+            self['fs_proc'] = get_fclk(self.parser, self.tproc.fullpath, "aclk")
 
-        self.map_signal_paths()
+            self.map_signal_paths()
 
-        self._streamer = DataStreamer(self)
+            self._streamer = DataStreamer(self)
 
-        # list of objects that need to be registered for autoproxying over Pyro
-        self.autoproxy = [self.streamer, self.tproc]
+            # list of objects that need to be registered for autoproxying over Pyro
+            self.autoproxy = [self.streamer, self.tproc]
 
     @property
     def tproc(self):
@@ -2320,11 +2315,13 @@ class QickSoc(Overlay, QickConfig):
             streamer.stop_readout()
             streamer.done_flag.wait()
             # push a dummy packet into the data queue to halt any running poll_data(), and wait long enough for the packet to be read out
-            streamer.data_queue.put((0, (None, None)))
+            streamer.data_queue.put((0, None))
             time.sleep(0.1)
             # reload the program (since the reset will have wiped it out)
             self.reload_program()
             print("streamer stopped")
+        streamer.stop_flag.clear()
+
         if streamer.data_available():
             # flush all the data in the streamer buffer
             print("clearing streamer buffer")
@@ -2336,7 +2333,6 @@ class QickSoc(Overlay, QickConfig):
         streamer.count = 0
 
         streamer.done_flag.clear()
-        streamer.stop_flag.clear()
         streamer.job_queue.put((total_count, counter_addr, ch_list, reads_per_count))
 
     def poll_data(self, totaltime=0.1, timeout=None):
@@ -2367,7 +2363,7 @@ class QickSoc(Overlay, QickConfig):
             try:
                 length, data = streamer.data_queue.get(block=True, timeout=timeout)
                 # if we stopped the readout while we were waiting for data, break out and return
-                if streamer.stop_flag.is_set():
+                if streamer.stop_flag.is_set() or data is None:
                     break
                 streamer.count += length
                 new_data.append(data)
