@@ -1,10 +1,8 @@
 from qick import *
-from socProxy import makeProxy
 import matplotlib.pyplot as plt
 import numpy as np
 import ipdb
 from qick.helpers import gauss
-from Experiment import ExperimentClass
 import datetime
 
 MAX_GAIN = 30000 #is there a way to get this?
@@ -52,18 +50,20 @@ class QChipProgram(AveragerProgram):
         super().__init__(soccfg, cfg)
 
     def _schedule_gates(self, gate_list):
-        chan_last_t = {chanind: 0 for chanind in self.wiremap.chanmapqubit.values()}
+        qubit_to_chan = self.wiremap.chanmapqubit
+        chan_last_t = {chanind: 0 for chanind in qubit_to_chan.values()}
         gate_schedule = []
         for gate in gate_list:
             pulses = gate.get_pulses()
             min_pulse_t = [] 
             for pulse in pulses:
-                dest_t = chan_last_t[pulse.dest]
+                dest_t = chan_last_t[qubit_to_chan[pulse.dest]]
                 min_pulse_t.append(dest_t - pulse.t0) #earliest gate time based on this pulse
             gate_t = max(min_pulse_t)
             for pulse in pulses:
-                chan_last_t[pulse.dest] = gate_t + pulse.t0 + pulse.twidth
+                chan_last_t[qubit_to_chan[pulse.dest]] = gate_t + pulse.t0 + pulse.twidth
             gate_schedule.append({'gate': gate, 't': gate_t})
+        return gate_schedule
 
     def _resolve_gates(self, gate_program):
         """
@@ -74,7 +74,7 @@ class QChipProgram(AveragerProgram):
             if isinstance(gatedict['qubit'], str):
                 gatedict['qubit'] = [gatedict['qubit']]
             gatename = ''.join(gatedict['qubit']) + gatedict['name']
-            gate = self.qchip.gates[gatedict]
+            gate = self.qchip.gates[gatename]
             if 'modi' in gatedict and gatedict['modi'] is not None:
                 gate = gate.get_updated_copy(gatedict['modi'])
             gate_list.append(gate)
@@ -124,7 +124,7 @@ class QChipProgram(AveragerProgram):
                 self._add_readout_ch(pulse, qubitid)
             else:
                 ch = self.wiremap.chanmapqubit[pulse.dest]
-                pulsename = '{}_{}'.format(name, i)
+                pulsename = str(hash(pulse))#'{}_{}'.format(name, i)
                 samples_per_clock = self.soccfg['gens'][ch]['samps_per_clk']
                 dt = 1.e-6*self.cycles2us(1)/samples_per_clock #time per sample
 
@@ -136,7 +136,6 @@ class QChipProgram(AveragerProgram):
                 #pulse.twidth = np.round(nsamples/samples_per_clock)*samples_per_clock*dt 
                 #pulse_env = pulse.get_env_samples(dt)[1] 
 
-                ipdb.set_trace()
                 pulse_env = pulse.get_env_samples(dt)[1]
                 pulse_env = np.pad(pulse_env, (0, 16-len(pulse_env)%16), mode='constant')
 
@@ -146,7 +145,7 @@ class QChipProgram(AveragerProgram):
                 else:
                     adc_ch_match = None
                 freq = pulse.fcarrier - self.wiremap.lofreq[pulse.dest]
-                regfreq = self.freq2reg(pulse.fcarrier/1.e6, ch, adc_ch_match)
+                regfreq = self.freq2reg(freq/1.e6, ch, adc_ch_match)
                 regphase = self.deg2reg(np.degrees(pulse.pcarrier), gen_ch=ch)
 
                 maxv = self.soccfg['gens'][ch]['maxv']*self.soccfg['gens'][ch]['maxv_scale']
@@ -158,7 +157,7 @@ class QChipProgram(AveragerProgram):
     def _add_readout_ch(self, pulse, qubitid):
         ch = self.wiremap.chanmapqubit[pulse.dest]
         gen_ch = self.wiremap.chanmapqubit[qubitid + '.rdrv']
-        freq_mhz = pulse.fcarrier/1.e6
+        freq_mhz = pulse.fcarrier/1.e6 - self.wiremap.lofreq[pulse.dest]/1.e6
         length_samples = self.us2cycles(pulse.twidth*1.e6)
         t0_samples = self.us2cycles(1.e6*pulse.t0)
         for rpulse in self.readout_cfg: 
@@ -198,37 +197,3 @@ class QChipProgram(AveragerProgram):
         """
         return AveragerProgram.acquire(self, soc, readouts_per_experiment=self.readouts_per_experiment, **kwargs)
 
-#Todo: make experiment class here
-#class Loopback(ExperimentClass):
-#    """
-#    Loopback Experiment basic
-#    """
-#
-#    def __init__(self, soc=None, soccfg=None, path='', prefix='data', cfg=None, config_file=None, progress=None):
-#        super().__init__(soc=soc, soccfg=soccfg, path=path, prefix=prefix, cfg=cfg, config_file=config_file, progress=progress)
-#
-#    def acquire(self, progress=False, debug=False):
-#        prog = LoopbackProgram(self.soccfg, self.cfg)
-#        self.soc.reset_gens()  # clear any DC or periodic values on generators
-#        iq_list = prog.acquire_decimated(self.soc, load_pulses=True, progress=False, debug=False)
-#        data={'config': self.cfg, 'data': {'iq_list': iq_list}}
-#        self.data=data
-#        return data
-#
-#    def display(self, data=None, fit=True, **kwargs):
-#        if data is None:
-#            data = self.data
-#        plt.figure(1)
-#        for ii, iq in enumerate(data['data']['iq_list']):
-#            plt.plot(iq[0], label="I value, ADC %d" % (data['config']['ro_chs'][ii]))
-#            plt.plot(iq[1], label="Q value, ADC %d" % (data['config']['ro_chs'][ii]))
-#            plt.plot(np.abs(iq[0] + 1j * iq[1]), label="mag, ADC %d" % (data['config']['ro_chs'][ii]))
-#        plt.ylabel("a.u.")
-#        plt.xlabel("Clock ticks")
-#        plt.title("Averages = " + str(data['config']["soft_avgs"]))
-#        plt.legend()
-#        plt.savefig(self.iname)
-#
-#    def save_data(self, data=None):
-#        print(f'Saving {self.fname}')
-#        super().save_data(data=data['data'])
